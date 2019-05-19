@@ -4,7 +4,9 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <Ethernet.h>
+#include <EthernetUdp.h>
 #include "EmonLib.h"
+#include <Dns.h> // for ntp
 
 
 // Create  instances for each CT channel
@@ -42,7 +44,18 @@ double power, elapsedkWh;
 int ppwh = 1; //1000 pulses/kwh = 1 pulse per wh
 
 
+/* ******** NTP Server Settings ******** */
+/* us.pool.ntp.org NTP server
+   (Set to your time server of choice) */
+IPAddress timeServer(216, 23, 247, 62);
 
+/* Set this to the offset (in seconds) to your local time
+   This example is GMT - 4 */
+const long timeZoneOffset = -14400L;
+
+/* Syncs to NTP server every 15 seconds for testing,
+   set to 1 hour or more to be reasonable */
+unsigned int ntpSyncTime = 3600;
 
 
 
@@ -89,6 +102,15 @@ void setup() {
 	// Setup indicator LED
 	pinMode(LEDpin, OUTPUT);
   attachInterrupt(digitalPinToInterrupt(3),Wh_pulse,RISING);
+
+  IPAddress testIP;
+DNSClient dns;
+dns.begin(Ethernet.dnsServerIP());
+dns.getHostByName("fr.pool.ntp.org",testIP);
+Serial.print("NTP IP from the pool: ");
+Serial.println(testIP);
+
+
 }
 
 void loop()
