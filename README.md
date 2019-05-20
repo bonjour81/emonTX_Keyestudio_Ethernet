@@ -12,8 +12,7 @@ emonTX arduino shield hack & connected to Keyestudio KS0304 Ethernet board
   As RFM interface is not using, a single wire or a jumper allows to convert the DS18B20 interface to a pulse counting interface.
   
   ![emonTX_modified](https://github.com/bonjour81/emonTX_Keyestudio_Ethernet/blob/development/assets/interrupt.svg)
-    
-  
-  ![emonTX_modified](https://raw.githubusercontent.com/bonjour81/emonTX_Keyestudio_Ethernet/development/assets/interrupt.svg)
-  
 
+If you don't want to cut the connector of the optical sensor, you can use a RJ45 adapter:
+
+  ![rj45adapter](https://github.com/bonjour81/emonTX_Keyestudio_Ethernet/blob/development/assets/RJ45_adapter.svg)
