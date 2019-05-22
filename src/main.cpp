@@ -227,9 +227,30 @@ void sendData(String node, float realPower, float supplyVoltage, float Irms) {
 		Serial.print("Connecting and sending JSON packet for Node ");
 		Serial.println(node);
 		// send the HTTP PUT request:
-		String get_req = "GET /emoncms/input/post?node=" + node + "&json={realPower:" + realPower + ",supplyVoltage:" + supplyVoltage + ",Irms:" + Irms + "}&apikey=" + emoncmsapikey;
-		Serial.println(get_req);
-		Serial.println("GET /emoncms/input/post?node=" + node + "&json={realPower:" + realPower + ",supplyVoltage:" + supplyVoltage + ",Irms:" + Irms + "}&apikey=" + emoncmsapikey);
+		//String get_req = "GET /emoncms/input/post?node=" + node + "&json={realPower:" + realPower + ",supplyVoltage:" + supplyVoltage + ",Irms:" + Irms + "}&apikey=" + emoncmsapikey;
+		//Serial.println(get_req);
+		//Serial.println("GET /emoncms/input/post?node=" + node + "&json={realPower:" + realPower + ",supplyVoltage:" + supplyVoltage + ",Irms:" + Irms + "}&apikey=" + emoncmsapikey);
+		Serial.print("GET /emoncms/input/post?node=");
+		Serial.print(node);
+		Serial.print("&json={");
+		Serial.print("Power:");
+		Serial.print(realPower);
+	/*	Serial.print(",supplyVoltage:");
+		Serial.print(supplyVoltage);
+		Serial.print(",Irms:");
+		Serial.print(Irms);*/
+		Serial.print("}&apikey=");
+		Serial.print(emoncmsapikey);
+		Serial.println(" HTTP/1.1");
+		Serial.print("Host: ");
+		Serial.println(emoncmsserver);
+		Serial.println("Connection: close");
+		Serial.println();
+
+
+
+
+
 		client.print("GET /emoncms/input/post?node=");
 		client.print(node);
 		client.print("&json={");
