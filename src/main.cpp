@@ -1,4 +1,4 @@
-// V0.O2 in dev
+// V0.O3 in dev (now working)
 
 
 #include <Arduino.h>
@@ -14,9 +14,9 @@
 /* *********************************** Emon ***************************** */
 char emoncmsserver[] = "192.168.1.152";
 // EMONCMS API write key
-//String emoncmsapikey = "YOUR API KEY";
+//String emoncmsapikey = "YOUR API KEY";  => Moved in passwords.h
 // Update frequency
-const unsigned long postingInterval = 10000;
+const unsigned long postingInterval = 20000;
 unsigned long lastConnectionTime = 0;
 
 // Create  instances for each CT channel
@@ -33,7 +33,7 @@ long pulseCount = 0;
 //Used to measure power.
 unsigned long pulseTime,lastTime;
 //power and energy
-double power, elapsedkWh;
+double power, elapsedkWh, elapsedkWh_buffer;
 //Number of pulses per wh - found or set on the meter.
 int ppwh = 1; //1000 pulses/kwh = 1 pulse per wh
 
@@ -81,6 +81,7 @@ time_t prevDisplay = 0;
 /* ******************************** functions declaration *************** */
 
 void sendData(String node, float realPower, float supplyVoltage, float Irms);
+void sendData_Wh(String node);
 void printData(String node, float realPower, float supplyVoltage, float Irms);
 void Wh_pulse();
 int getTimeAndDate();
@@ -123,7 +124,7 @@ void setup() {
 
 
 	// preparing NTP timeset.
-  Serial.print("now:");Serial.println(now());
+	Serial.print("now:"); Serial.println(now());
 	DNSClient dns;
 	dns.begin(Ethernet.dnsServerIP());
 	dns.getHostByName("fr.pool.ntp.org",ntp_IP);
@@ -136,7 +137,7 @@ void setup() {
 		delay(1000);
 		trys++;
 	}
-  Serial.print("now:");Serial.println(now());
+	Serial.print("now:"); Serial.println(now());
 	// First argument is analog pin used by CT connection, second is calibration factor.
 	// Calibration factor = CT ratio / burden resistance = (100A / 0.05A) / 33 Ohms = 60.606
 	// First argument is analog pin used by CT connection
@@ -149,13 +150,13 @@ void setup() {
 	// Use a multimeter to measure the voltage around a resistive load. Compare the voltage measured to the reported voltage of the emonTx here.
 	// Recalibrate using: New calibration = existing calibration × (correct reading ÷ emonTx reading)
 	// More information: https://learn.openenergymonitor.org/electricity-monitoring/ctac/calibration
-	ct1.voltage(0, 260, 1.7);
-	ct2.voltage(0, 260, 1.7);
-	ct3.voltage(0, 260, 1.7);
-	ct4.voltage(0, 260, 1.7);
+	ct1.voltage(0, 243.5, 1.7);
+	ct2.voltage(0, 243.5, 1.7);
+	ct3.voltage(0, 243.5, 1.7);
+	ct4.voltage(0, 243.5, 1.7);
 	// Setup indicator LED
 	pinMode(LEDpin, OUTPUT);
-	attachInterrupt(digitalPinToInterrupt(3),Wh_pulse,RISING);
+	attachInterrupt(digitalPinToInterrupt(2),Wh_pulse,RISING);
 
 }
 
@@ -183,26 +184,37 @@ void loop()
 // If the posting interval has passed since your last connection,
 // then connect again and send data:
 	if (millis() - lastConnectionTime > postingInterval) {
-    //To make sure the DHCP lease is properly renewed when needed, be sure to call Ethernet.maintain() regularly.
-        Ethernet.maintain();
-                digitalWrite(LEDpin, HIGH);
-                // Extract individual elements (realpower,Vrms and Irms)
-                // and use them as arguments for printing and sending the data. First argument is node name.
-                printData("ct1", ct1.realPower, ct1.Vrms, ct1.Irms);
-                sendData("ct1", ct1.realPower, ct1.Vrms, ct1.Irms);
-                printData("ct2", ct2.realPower, ct2.Vrms, ct2.Irms);
-                sendData("ct2", ct2.realPower, ct2.Vrms, ct2.Irms);
-                printData("ct3", ct3.realPower, ct3.Vrms, ct3.Irms);
-                sendData("ct3", ct3.realPower, ct3.Vrms, ct3.Irms);
-                printData("ct4", ct4.realPower, ct4.Vrms, ct4.Irms);
-                sendData("ct4", ct4.realPower, ct4.Vrms, ct4.Irms);
-                digitalWrite(LEDpin, LOW);
-        }
+		//To make sure the DHCP lease is properly renewed when needed, be sure to call Ethernet.maintain() regularly.
+		Ethernet.maintain();
+		digitalWrite(LEDpin, HIGH);
+		// Extract individual elements (realpower,Vrms and Irms)
+		// and use them as arguments for printing and sending the data. First argument is node name.
+		printData("ct1", ct1.realPower, ct1.Vrms, ct1.Irms);
+		sendData("ct1", ct1.realPower, ct1.Vrms, ct1.Irms);
+		printData("ct2", ct2.realPower, ct2.Vrms, ct2.Irms);
+		sendData("ct2", ct2.realPower, ct2.Vrms, ct2.Irms);
+		printData("ct3", ct3.realPower, ct3.Vrms, ct3.Irms);
+		sendData("ct3", ct3.realPower, ct3.Vrms, ct3.Irms);
+		printData("ct4", ct4.realPower, ct4.Vrms, ct4.Irms);
+		sendData("ct4", ct4.realPower, ct4.Vrms, ct4.Irms);
+		printData("Compteur", power, ct4.Vrms, 0);
+		sendData("Compteur", power, ct4.Vrms, 0);
+		digitalWrite(LEDpin, LOW);
+	}
+  if (elapsedkWh >= 0.1) {
+    sendData_Wh("Compteur");
+	}
+
+
 }  // end Loop
+
+
+
 
 
 // interrupt function for optical pulse count
 void Wh_pulse(){
+//	detachInterrupt(digitalPinToInterrupt(2));
 	//used to measure time between pulses.
 	lastTime = pulseTime;
 	pulseTime = micros();
@@ -213,12 +225,14 @@ void Wh_pulse(){
 //Find kwh elapsed
 	elapsedkWh = (1.0*pulseCount/(ppwh*1000)); //multiply by 1000 to convert pulses per wh to kwh
 //Print the values.
+	Serial.print("power:");
 	Serial.print(power,4);
-	Serial.print(" ");
+	Serial.print(" kWh: ");
 	Serial.println(elapsedkWh,3);
+	//delay(200);
+	//attachInterrupt(digitalPinToInterrupt(2),Wh_pulse,FALLING);
+
 }
-
-
 
 // this method makes a HTTP connection to the EmonCMS server and sends the data in correct format
 void sendData(String node, float realPower, float supplyVoltage, float Irms) {
@@ -227,30 +241,6 @@ void sendData(String node, float realPower, float supplyVoltage, float Irms) {
 		Serial.print("Connecting and sending JSON packet for Node ");
 		Serial.println(node);
 		// send the HTTP PUT request:
-		//String get_req = "GET /emoncms/input/post?node=" + node + "&json={realPower:" + realPower + ",supplyVoltage:" + supplyVoltage + ",Irms:" + Irms + "}&apikey=" + emoncmsapikey;
-		//Serial.println(get_req);
-		//Serial.println("GET /emoncms/input/post?node=" + node + "&json={realPower:" + realPower + ",supplyVoltage:" + supplyVoltage + ",Irms:" + Irms + "}&apikey=" + emoncmsapikey);
-		Serial.print("GET /emoncms/input/post?node=");
-		Serial.print(node);
-		Serial.print("&json={");
-		Serial.print("Power:");
-		Serial.print(realPower);
-	/*	Serial.print(",supplyVoltage:");
-		Serial.print(supplyVoltage);
-		Serial.print(",Irms:");
-		Serial.print(Irms);*/
-		Serial.print("}&apikey=");
-		Serial.print(emoncmsapikey);
-		Serial.println(" HTTP/1.1");
-		Serial.print("Host: ");
-		Serial.println(emoncmsserver);
-		Serial.println("Connection: close");
-		Serial.println();
-
-
-
-
-
 		client.print("GET /emoncms/input/post?node=");
 		client.print(node);
 		client.print("&json={");
@@ -275,6 +265,37 @@ void sendData(String node, float realPower, float supplyVoltage, float Irms) {
 		client.stop();
 	}
 }
+
+// this method makes a HTTP connection to the EmonCMS server and sends the data in correct format
+void sendData_Wh(String node) {
+	// if there's a successful connection:
+	if (client.connect(emoncmsserver, 80)) {
+		elapsedkWh_buffer = elapsedkWh;
+		pulseCount = 0;
+		Serial.print("Connecting and sending JSON packet for Node ");
+		Serial.print(node);Serial.print(" kWh:");Serial.println(elapsedkWh_buffer);
+		// send the HTTP PUT request:
+		client.print("GET /emoncms/input/post?node=");
+		client.print(node);
+		client.print("&json={");
+		client.print("realWh:");
+		client.print(elapsedkWh_buffer);
+		client.print("}&apikey=");
+		client.print(emoncmsapikey);
+		client.println(" HTTP/1.1");
+		client.print("Host: ");
+		client.println(emoncmsserver);
+		client.println("Connection: close");
+		client.println();
+		client.stop();
+	}
+	else {
+		Serial.println("Could not connect to server. Disconnecting!");
+		client.stop();
+	}
+}
+
+
 
 // Serial print out information on the node for debugging
 void printData(String node, float realPower, float supplyVoltage, float Irms) {
