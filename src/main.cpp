@@ -1,5 +1,4 @@
-// V0.O3 in dev (now working)
-
+// V0.O4 in dev (now working)
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -8,15 +7,15 @@
 #include <Dns.h> // for ntp
 #include <Time.h>
 #include "EmonLib.h"
+#include <avr/wdt.h>
+
 #include "passwords.h"
 
 
 /* *********************************** Emon ***************************** */
 char emoncmsserver[] = "192.168.1.152";
-// EMONCMS API write key
 //String emoncmsapikey = "YOUR API KEY";  => Moved in passwords.h
-// Update frequency
-const unsigned long postingInterval = 20000;
+const unsigned long postingInterval = 20000; // Update frequency
 unsigned long lastConnectionTime = 0;
 
 // Create  instances for each CT channel
@@ -27,29 +26,23 @@ EnergyMonitor ct4;
 // On-board emonTx LED
 const int LEDpin = 9;
 
-//optical pulse counter settings
-//Number of pulses, used to measure energy.
+//optical pulse counter settings, Number of pulses, used to measure energy.
 long pulseCount = 0;
-//Used to measure power.
+bool pulse_occured = false;
+//Used to calculate instant power from time between 2 pulses
 unsigned long pulseTime,lastTime;
 //power and energy
 double power, elapsedkWh, elapsedkWh_buffer;
 //Number of pulses per wh - found or set on the meter.
 int ppwh = 1; //1000 pulses/kwh = 1 pulse per wh
 
-
-
 /* *********************************** Ethernet ************************* */
 // Enter a MAC address and IP address for your controller below.
 // The IP address will be dependent on your local network:
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
-IPAddress ip(192, 168, 1, 196);
+IPAddress ip(192, 168, 1, 196);  // IP address of the devices (if no DHCP)
 // Initialize the Ethernet client instance
 EthernetClient client;
-// EMONCMS server IP
-
-
-
 
 /* *************************** NTP Server Settings ********************* */
 /* us.pool.ntp.org NTP server
@@ -62,7 +55,6 @@ const long timeZoneOffset = 7200;
 /* Syncs to NTP server every 15 seconds for testing,
    set to 1 hour or more to be reasonable */
 unsigned int ntpSyncTime = 3600;
-
 // local port to listen for UDP packets
 unsigned int localPort = 8888;
 // NTP time stamp is in the first 48 bytes of the message
@@ -79,7 +71,6 @@ time_t prevDisplay = 0;
 
 
 /* ******************************** functions declaration *************** */
-
 void sendData(String node, float realPower, float supplyVoltage, float Irms);
 void sendData_Wh(String node);
 void printData(String node, float realPower, float supplyVoltage, float Irms);
@@ -87,57 +78,18 @@ void Wh_pulse();
 int getTimeAndDate();
 unsigned long sendNTPpacket(IPAddress& address);
 void (* resetFunc) (void) = 0; //declare reset function @ address 0
+void ntp_sync();
+void ntp_resync();
+void eth_connect();
 
 /* *********************** SETUP() ************************************** */
-
 void setup() {
 	Serial.begin(115200);
 	Serial.println("EMONTX Started!");
-	Serial.print("connecting to Ethernet");
-	//Ethernet.init(10);
-	// Ethernet shield and NTP setup
-	int i = 0;
-	int DHCP = 0;
-	//Try to get dhcp settings 30 times before giving up
-	while( DHCP == 0 && i < 30) {
-		DHCP = Ethernet.begin(mac); // return 1 if successfull
-		Serial.print(".");
-		delay(500);
-		i++;
-	}
-	if(DHCP == 0) {
-		Serial.println("DHCP FAILED, reseting...");
-		//Serial.flush();
-		delay(60000);
-		resetFunc(); //call reset
-	}
-	Serial.println("DHCP Success!");
-	Serial.print("IP: "); Serial.println(Ethernet.localIP());
-	Serial.print("Gateway "); Serial.println(Ethernet.gatewayIP());
-	Serial.print("Subnet mask: "); Serial.println(Ethernet.subnetMask());
-	Serial.print("DNS: "); Serial.println(Ethernet.dnsServerIP());
-	Ethernet.setRetransmissionTimeout(300);
-	Ethernet.setRetransmissionCount(1);
-	// Ethernet warmup delay
-	delay(2000);
+	eth_connect();
 	Serial.println("EMONTX HTTP client started!");
+	//void ntp_sync()
 
-
-	// preparing NTP timeset.
-	Serial.print("now:"); Serial.println(now());
-	DNSClient dns;
-	dns.begin(Ethernet.dnsServerIP());
-	dns.getHostByName("fr.pool.ntp.org",ntp_IP);
-	Serial.print("NTP IP from fr.pool.ntp.org: "); Serial.println(ntp_IP);
-	Serial.print("Trying to get time from NTP, ");
-	//Try to get the date and time
-	int trys=0;
-	while(!getTimeAndDate() && trys<10) {
-		Serial.print(".");
-		delay(1000);
-		trys++;
-	}
-	Serial.print("now:"); Serial.println(now());
 	// First argument is analog pin used by CT connection, second is calibration factor.
 	// Calibration factor = CT ratio / burden resistance = (100A / 0.05A) / 33 Ohms = 60.606
 	// First argument is analog pin used by CT connection
@@ -156,36 +108,23 @@ void setup() {
 	ct4.voltage(0, 243.5, 1.7);
 	// Setup indicator LED
 	pinMode(LEDpin, OUTPUT);
-	attachInterrupt(digitalPinToInterrupt(2),Wh_pulse,RISING);
+	attachInterrupt(digitalPinToInterrupt(2),Wh_pulse,FALLING);
 
 }
 
 void loop()
 {
-	// check if ntp update is required (every 1h)
-	if(now()-ntpLastUpdate > ntpSyncTime) {
-		int trys=0;
-		while(!getTimeAndDate() && trys<10) {
-			trys++;
-		}
-		if(trys<10) {
-			Serial.println("ntp server update success");
-		}
-		else{
-			Serial.println("ntp server update failed");
-		}
-	}
-
+	wdt_enable(WDTO_8S);  // watchdog 8sec
 // Calculate all. First argument is No.of half wavelengths (crossings),second is time-out
 	ct1.calcVI(20, 2000);
 	ct2.calcVI(20, 2000);
+	wdt_enable(WDTO_8S);
 	ct3.calcVI(20, 2000);
 	ct4.calcVI(20, 2000);
 // If the posting interval has passed since your last connection,
 // then connect again and send data:
+	wdt_enable(WDTO_8S);
 	if (millis() - lastConnectionTime > postingInterval) {
-		//To make sure the DHCP lease is properly renewed when needed, be sure to call Ethernet.maintain() regularly.
-		Ethernet.maintain();
 		digitalWrite(LEDpin, HIGH);
 		// Extract individual elements (realpower,Vrms and Irms)
 		// and use them as arguments for printing and sending the data. First argument is node name.
@@ -200,15 +139,26 @@ void loop()
 		printData("Compteur", power, ct4.Vrms, 0);
 		sendData("Compteur", power, ct4.Vrms, 0);
 		digitalWrite(LEDpin, LOW);
+		ntp_resync(); // has it may take some seconds, let's do it after the periodic emission.
 	}
-  if (elapsedkWh >= 0.1) {
-    sendData_Wh("Compteur");
+	if (elapsedkWh >= 0.1) {   // every 100Wh, send it
+		sendData_Wh("Compteur");
 	}
-
-
+	if (pulse_occured == true) {
+		pulse_occured = false;
+		Serial.print("power:");
+		Serial.print(power,4);
+		Serial.print("W, elapsed kWh: ");
+		Serial.println(elapsedkWh,3);
+	}
+	//To make sure the DHCP lease is properly renewed when needed, be sure to call Ethernet.maintain() regularly.
+	Ethernet.maintain();
+	delay(500);
+	if(Ethernet.linkStatus() == LinkOFF) { //if connexion lost, try reconnect
+		Serial.println("Ethernet seems disconnected, let's try reconnect");
+		eth_connect();
+	}
 }  // end Loop
-
-
 
 
 
@@ -218,20 +168,13 @@ void Wh_pulse(){
 	//used to measure time between pulses.
 	lastTime = pulseTime;
 	pulseTime = micros();
-//pulseCounter
 	pulseCount++;
 //Calculate power
 	power = (3600000000.0 / (pulseTime - lastTime))/ppwh;
 //Find kwh elapsed
 	elapsedkWh = (1.0*pulseCount/(ppwh*1000)); //multiply by 1000 to convert pulses per wh to kwh
 //Print the values.
-	Serial.print("power:");
-	Serial.print(power,4);
-	Serial.print(" kWh: ");
-	Serial.println(elapsedkWh,3);
-	//delay(200);
-	//attachInterrupt(digitalPinToInterrupt(2),Wh_pulse,FALLING);
-
+	pulse_occured = true;
 }
 
 // this method makes a HTTP connection to the EmonCMS server and sends the data in correct format
@@ -273,7 +216,7 @@ void sendData_Wh(String node) {
 		elapsedkWh_buffer = elapsedkWh;
 		pulseCount = 0;
 		Serial.print("Connecting and sending JSON packet for Node ");
-		Serial.print(node);Serial.print(" kWh:");Serial.println(elapsedkWh_buffer);
+		Serial.print(node); Serial.print(" kWh:"); Serial.println(elapsedkWh_buffer);
 		// send the HTTP PUT request:
 		client.print("GET /emoncms/input/post?node=");
 		client.print(node);
@@ -309,9 +252,6 @@ void printData(String node, float realPower, float supplyVoltage, float Irms) {
 	Serial.print(Irms);
 	Serial.println(" A");
 }
-
-
-
 
 // NTP update
 // Do not alter this function, it is used by the system
@@ -350,4 +290,67 @@ unsigned long sendNTPpacket(IPAddress& address)
 	Udp.beginPacket(address, 123);
 	Udp.write(packetBuffer,NTP_PACKET_SIZE);
 	Udp.endPacket();
+}
+
+void ntp_sync() {
+	// preparing NTP timeset.
+	Serial.print("now:"); Serial.println(now());
+	DNSClient dns;
+	dns.begin(Ethernet.dnsServerIP());
+	dns.getHostByName("fr.pool.ntp.org",ntp_IP);
+	Serial.print("NTP IP from fr.pool.ntp.org: "); Serial.println(ntp_IP);
+	Serial.print("Trying to get time from NTP, ");
+	//Try to get the date and time
+	int trys=0;
+	while(!getTimeAndDate() && trys<10) {
+		Serial.print(".");
+		delay(1000);
+		trys++;
+	}
+	Serial.print(" Time, now():"); Serial.println(now());
+}
+
+void ntp_resync() {
+	if(now()-ntpLastUpdate > ntpSyncTime) {
+		int trys=0;
+		while(!getTimeAndDate() && trys<10) {
+			trys++;
+		}
+		if(trys<10) {
+			Serial.println("ntp server update success");
+		}
+		else{
+			Serial.println("ntp server update failed");
+		}
+	}
+}
+
+
+void eth_connect() {
+	Serial.print("Connecting to Ethernet...");
+	// Ethernet setup
+	int i = 0;
+	int DHCP = 0;
+	//Try to get dhcp settings 30 times before giving up
+	while( DHCP == 0 && i < 30) {
+		DHCP = Ethernet.begin(mac); // return 1 if successfull
+		Serial.print(".");
+		delay(500);
+		i++;
+	}
+	if(DHCP == 0) {
+		Serial.println("DHCP FAILED, reseting...");
+		//Serial.flush();
+		delay(60000);
+		resetFunc(); //call reset
+	}
+	Serial.println("DHCP Success!");
+	Serial.print("IP: "); Serial.println(Ethernet.localIP());
+	Serial.print("Gateway "); Serial.println(Ethernet.gatewayIP());
+	Serial.print("Subnet mask: "); Serial.println(Ethernet.subnetMask());
+	Serial.print("DNS: "); Serial.println(Ethernet.dnsServerIP());
+	Ethernet.setRetransmissionTimeout(300);
+	Ethernet.setRetransmissionCount(1);
+	// Ethernet warmup delay
+	delay(2000);
 }
