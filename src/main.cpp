@@ -1,19 +1,21 @@
-// V0.O4 in dev (now working)
+// V0.10 in dev swith to MQTT
 
 #include <Arduino.h>
 #include <SPI.h>
 #include <Ethernet.h>
-#include <EthernetUdp.h>^ // for ntp
-#include <Dns.h> // for ntp
+//#include <EthernetUdp.h>^ // for ntp
+//#include <Dns.h> // for ntp
 #include <Time.h>
 #include "EmonLib.h"
 #include <avr/wdt.h>
+#include "Adafruit_MQTT.h"
+#include "Adafruit_MQTT_Client.h"
 
 #include "passwords.h"
 
-
+#define FW_VERSION  "10"
 /* *********************************** Emon ***************************** */
-char emoncmsserver[] = "192.168.1.152";
+//char emoncmsserver[] = "192.168.1.152";
 //String emoncmsapikey = "YOUR API KEY";  => Moved in passwords.h
 const unsigned long postingInterval = 20000; // Update frequency
 unsigned long lastConnectionTime = 0;
@@ -44,30 +46,53 @@ IPAddress ip(192, 168, 1, 196);  // IP address of the devices (if no DHCP)
 // Initialize the Ethernet client instance
 EthernetClient client;
 
+/* *********************************** MQTT ************************* */
+Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, "emonTX", AIO_USERNAME, AIO_KEY);
+Adafruit_MQTT_Publish ct1p_pub      = Adafruit_MQTT_Publish(&mqtt, "emon/ct1_power", 1);
+Adafruit_MQTT_Publish ct2p_pub      = Adafruit_MQTT_Publish(&mqtt, "emon/ct2_power", 1);
+Adafruit_MQTT_Publish ct3p_pub      = Adafruit_MQTT_Publish(&mqtt, "emon/ct3_power", 1);
+Adafruit_MQTT_Publish ct4p_pub      = Adafruit_MQTT_Publish(&mqtt, "emon/ct4_power", 1);
+Adafruit_MQTT_Publish compteurp_pub = Adafruit_MQTT_Publish(&mqtt, "emon/compteur_power", 1);
+Adafruit_MQTT_Publish compteurpulse_pub = Adafruit_MQTT_Publish(&mqtt, "emon/compteur_pulses", 1);
+
+
+Adafruit_MQTT_Publish ct1v_pub      = Adafruit_MQTT_Publish(&mqtt, "emon/ct1_volt", 1);
+Adafruit_MQTT_Publish ct2v_pub      = Adafruit_MQTT_Publish(&mqtt, "emon/ct2_volt", 1);
+Adafruit_MQTT_Publish ct3v_pub      = Adafruit_MQTT_Publish(&mqtt, "emon/ct3_volt", 1);
+Adafruit_MQTT_Publish ct4v_pub      = Adafruit_MQTT_Publish(&mqtt, "emon/ct4_volt", 1);
+Adafruit_MQTT_Publish compteurv_pub = Adafruit_MQTT_Publish(&mqtt, "emon/compteur_volt", 1);
+
+Adafruit_MQTT_Publish ct1i_pub      = Adafruit_MQTT_Publish(&mqtt, "emon/ct1_amp", 1);
+Adafruit_MQTT_Publish ct2i_pub      = Adafruit_MQTT_Publish(&mqtt, "emon/ct2_amp", 1);
+Adafruit_MQTT_Publish ct3i_pub      = Adafruit_MQTT_Publish(&mqtt, "emon/ct3_amp", 1);
+Adafruit_MQTT_Publish ct4i_pub      = Adafruit_MQTT_Publish(&mqtt, "emon/ct4_amp", 1);
+
+Adafruit_MQTT_Publish Version_pub     = Adafruit_MQTT_Publish(&mqtt, "emonTX/Version", 1);
+Adafruit_MQTT_Publish Status_pub      = Adafruit_MQTT_Publish(&mqtt, "emonTX/Status", 1);
+
 /* *************************** NTP Server Settings ********************* */
 /* us.pool.ntp.org NTP server
    (Set to your time server of choice) */
-IPAddress timeServer(216, 23, 247, 62);
-IPAddress ntp_IP;
+///IPAddress timeServer(216, 23, 247, 62);
+///IPAddress ntp_IP;
 /* Set this to the offset (in seconds) to your local time
    This example is GMT - 4 */
-const long timeZoneOffset = 7200;
+///const long timeZoneOffset = 7200;
 /* Syncs to NTP server every 15 seconds for testing,
    set to 1 hour or more to be reasonable */
-unsigned int ntpSyncTime = 3600;
+///unsigned int ntpSyncTime = 3600;
 // local port to listen for UDP packets
-unsigned int localPort = 8888;
+///unsigned int localPort = 8888;
 // NTP time stamp is in the first 48 bytes of the message
-const int NTP_PACKET_SIZE= 48;
+///const int NTP_PACKET_SIZE= 48;
 // Buffer to hold incoming and outgoing packets
-byte packetBuffer[NTP_PACKET_SIZE];
+///byte packetBuffer[NTP_PACKET_SIZE];
 // A UDP instance to let us send and receive packets over UDP
-EthernetUDP Udp;
+///EthernetUDP Udp;
 // Keeps track of how long ago we updated the NTP server
-unsigned long ntpLastUpdate = 0;
+///unsigned long ntpLastUpdate = 0;
 // Check last time clock displayed (Not in Production)
-time_t prevDisplay = 0;
-
+///time_t prevDisplay = 0;
 
 
 /* ******************************** functions declaration *************** */
@@ -75,12 +100,13 @@ void sendData(String node, float realPower, float supplyVoltage, float Irms);
 void sendData_Wh(String node);
 void printData(String node, float realPower, float supplyVoltage, float Irms);
 void Wh_pulse();
-int getTimeAndDate();
+//int getTimeAndDate();
 unsigned long sendNTPpacket(IPAddress& address);
 void (* resetFunc) (void) = 0; //declare reset function @ address 0
-void ntp_sync();
-void ntp_resync();
+//void ntp_sync();
+//void ntp_resync();
 void eth_connect();
+void setup_mqtt();
 
 /* *********************** SETUP() ************************************** */
 void setup() {
@@ -89,7 +115,7 @@ void setup() {
 	eth_connect();
 	Serial.println("EMONTX HTTP client started!");
 	//void ntp_sync()
-
+  void setup_mqtt();
 	// First argument is analog pin used by CT connection, second is calibration factor.
 	// Calibration factor = CT ratio / burden resistance = (100A / 0.05A) / 33 Ohms = 60.606
 	// First argument is analog pin used by CT connection
@@ -126,9 +152,26 @@ void loop()
 	wdt_enable(WDTO_8S);
 	if (millis() - lastConnectionTime > postingInterval) {
 		digitalWrite(LEDpin, HIGH);
+		void setup_mqtt();
+		ct1p_pub.publish(ct1.realPower);
+		ct2p_pub.publish(ct2.realPower);
+		ct3p_pub.publish(ct3.realPower);
+		ct4p_pub.publish(ct4.realPower);
+		ct1v_pub.publish(ct1.Vrms);
+		ct2v_pub.publish(ct2.Vrms);
+		ct3v_pub.publish(ct3.Vrms);
+		ct4v_pub.publish(ct4.Vrms);
+		ct1i_pub.publish(ct1.Irms);
+		ct2i_pub.publish(ct2.Irms);
+		ct3i_pub.publish(ct3.Irms);
+		ct4i_pub.publish(ct4.Irms);
+		compteurp_pub.publish(power);
+
+		compteurv_pub.publish((ct1.Vrms+ct2.Vrms+ct3.Vrms+ct4.Vrms)/4);
+
 		// Extract individual elements (realpower,Vrms and Irms)
 		// and use them as arguments for printing and sending the data. First argument is node name.
-		printData("ct1", ct1.realPower, ct1.Vrms, ct1.Irms);
+		/*printData("ct1", ct1.realPower, ct1.Vrms, ct1.Irms);
 		sendData("ct1", ct1.realPower, ct1.Vrms, ct1.Irms);
 		printData("ct2", ct2.realPower, ct2.Vrms, ct2.Irms);
 		sendData("ct2", ct2.realPower, ct2.Vrms, ct2.Irms);
@@ -139,10 +182,13 @@ void loop()
 		printData("Compteur", power, ct4.Vrms, 0);
 		sendData("Compteur", power, ct4.Vrms, 0);
 		digitalWrite(LEDpin, LOW);
-		ntp_resync(); // has it may take some seconds, let's do it after the periodic emission.
+		ntp_resync(); // has it may take some seconds, let's do it after the periodic emission.*/
 	}
 	if (elapsedkWh >= 0.1) {   // every 100Wh, send it
-		sendData_Wh("Compteur");
+		elapsedkWh_buffer = elapsedkWh;
+		pulseCount = 0;
+		compteurp_pub.publish(elapsedkWh_buffer);
+		//sendData_Wh("Compteur");
 	}
 	if (pulse_occured == true) {
 		pulse_occured = false;
@@ -176,7 +222,7 @@ void Wh_pulse(){
 //Print the values.
 	pulse_occured = true;
 }
-
+/*
 // this method makes a HTTP connection to the EmonCMS server and sends the data in correct format
 void sendData(String node, float realPower, float supplyVoltage, float Irms) {
 	// if there's a successful connection:
@@ -207,8 +253,8 @@ void sendData(String node, float realPower, float supplyVoltage, float Irms) {
 		Serial.println("Could not connect to server. Disconnecting!");
 		client.stop();
 	}
-}
-
+}*/
+/*
 // this method makes a HTTP connection to the EmonCMS server and sends the data in correct format
 void sendData_Wh(String node) {
 	// if there's a successful connection:
@@ -236,12 +282,12 @@ void sendData_Wh(String node) {
 		Serial.println("Could not connect to server. Disconnecting!");
 		client.stop();
 	}
-}
+}*/
 
 
 
 // Serial print out information on the node for debugging
-void printData(String node, float realPower, float supplyVoltage, float Irms) {
+/*void printData(String node, float realPower, float supplyVoltage, float Irms) {
 	Serial.print("Measurement taken for Node ");
 	Serial.print(node);
 	Serial.print(". RealPower: ");
@@ -251,10 +297,11 @@ void printData(String node, float realPower, float supplyVoltage, float Irms) {
 	Serial.print(" V | Irms: ");
 	Serial.print(Irms);
 	Serial.println(" A");
-}
+}*/
 
 // NTP update
 // Do not alter this function, it is used by the system
+/*
 int getTimeAndDate() {
 	int flag=0;
 	Udp.begin(localPort);
@@ -273,8 +320,8 @@ int getTimeAndDate() {
 		ntpLastUpdate = now();
 	}
 	return flag;
-}
-
+}*/
+/*
 // Do not alter this function, it is used by the system
 unsigned long sendNTPpacket(IPAddress& address)
 {
@@ -290,8 +337,8 @@ unsigned long sendNTPpacket(IPAddress& address)
 	Udp.beginPacket(address, 123);
 	Udp.write(packetBuffer,NTP_PACKET_SIZE);
 	Udp.endPacket();
-}
-
+}*/
+/*
 void ntp_sync() {
 	// preparing NTP timeset.
 	Serial.print("now:"); Serial.println(now());
@@ -309,7 +356,8 @@ void ntp_sync() {
 	}
 	Serial.print(" Time, now():"); Serial.println(now());
 }
-
+*/
+/*
 void ntp_resync() {
 	if(now()-ntpLastUpdate > ntpSyncTime) {
 		int trys=0;
@@ -324,7 +372,7 @@ void ntp_resync() {
 		}
 	}
 }
-
+*/
 
 void eth_connect() {
 	Serial.print("Connecting to Ethernet...");
@@ -353,4 +401,25 @@ void eth_connect() {
 	Ethernet.setRetransmissionCount(1);
 	// Ethernet warmup delay
 	delay(2000);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//  setup_mqtt() : connexion to mosquitto server
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void setup_mqtt() {
+   int8_t ret;
+   // Stop if already connected.
+   if (mqtt.connected()) {
+      return;
+   }
+	 Serial.println("Connecting to mqtt");
+   while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
+      Serial.print(".");
+      mqtt.disconnect();
+      delay(1000);  // wait 1 seconds
+         }
+   Status_pub.publish("Online!");
+   delay(5);
+   Version_pub.publish(FW_VERSION);
 }
