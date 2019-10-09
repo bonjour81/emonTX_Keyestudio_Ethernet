@@ -1,4 +1,4 @@
-// V0.10 in dev swith to MQTT
+// V0.11 in dev swith to MQTT
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -13,7 +13,7 @@
 
 #include "passwords.h"
 
-#define FW_VERSION  "10"
+#define FW_VERSION  "11"
 /* *********************************** Emon ***************************** */
 //char emoncmsserver[] = "192.168.1.152";
 //String emoncmsapikey = "YOUR API KEY";  => Moved in passwords.h
@@ -81,11 +81,13 @@ void setup_mqtt();
 /* *********************** SETUP() ************************************** */
 void setup() {
 	Serial.begin(115200);
-	Serial.println("EMONTX Started!");
+	Serial.println("KEYESTUDIO EMONTX Started!");
+	delay(100);
 	eth_connect();
-	Serial.println("EMONTX HTTP client started!");
+	Serial.println("EMONTX Ethernet client started!");
 	//void ntp_sync()
-	void setup_mqtt();
+	Serial.println("time to connect MQTT");
+	setup_mqtt();
 	// First argument is analog pin used by CT connection, second is calibration factor.
 	// Calibration factor = CT ratio / burden resistance = (100A / 0.05A) / 33 Ohms = 60.606
 	// First argument is analog pin used by CT connection
@@ -122,7 +124,7 @@ void loop()
 	Serial.println("loop");
 	if (millis() - lastConnectionTime > postingInterval) {
 		digitalWrite(LEDpin, HIGH);
-		void setup_mqtt();
+		setup_mqtt();
 		if (ct1.realPower > 0 && ct1.realPower <10000) ct1p_pub.publish(ct1.realPower);
 		if (ct2.realPower > 0 && ct2.realPower <10000) ct2p_pub.publish(ct2.realPower);
 		if (ct3.realPower > 0 && ct3.realPower <10000) ct3p_pub.publish(ct3.realPower);
@@ -185,6 +187,8 @@ void eth_connect() {
 	int i = 0;
 	int DHCP = 0;
 	//Try to get dhcp settings 30 times before giving up
+  DHCP = Ethernet.begin(mac); // return 1 if successfull
+	Serial.print("Ethernet is:");Serial.println(Ethernet.hardwareStatus());
 	while( DHCP == 0 && i < 30) {
 		DHCP = Ethernet.begin(mac); // return 1 if successfull
 		Serial.print(".");
@@ -205,7 +209,8 @@ void eth_connect() {
 	Ethernet.setRetransmissionTimeout(300);
 	Ethernet.setRetransmissionCount(1);
 	// Ethernet warmup delay
-	delay(2000);
+	delay(4000);
+	Serial.println("proceed to next step...");
 }
 
 
